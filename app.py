@@ -10,81 +10,94 @@ st.set_page_config(page_title="Live AI Trader", layout="centered")
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
+    # Switch to 2.5 or 2.0 if 1.5 is deprecated
     model = genai.GenerativeModel('gemini-2.5-flash')
 except:
     st.error("⚠️ API Key Missing. Check Secrets.")
 
-# --- 2. SETUP BINANCE CONNECTION ---
+# --- 2. ROBUST DATA FETCHER (With Backup) ---
 def fetch_market_data(symbol, timeframe='1h'):
-    """Fetches the last 50 candles from Binance"""
+    """
+    Fetches data from Binance. If that fails, tries Bybit.
+    Auto-fixes symbol format (e.g. BTCUSDT -> BTC/USDT).
+    """
+    # 1. Auto-Fix Symbol Format
+    if '/' not in symbol:
+        # Assume the last 4 chars are the quote (e.g. USDT)
+        symbol = f"{symbol[:-4]}/{symbol[-4:]}"
+    symbol = symbol.upper()
+
+    # 2. Try Binance First
     try:
         exchange = ccxt.binance()
-        # Fetch OHLCV data (Open, High, Low, Close, Volume)
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=50)
-        
-        # Convert to readable format
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        
-        # Create a text string of data for the AI to read
-        data_string = df.tail(20).to_string(index=False)
-        return data_string, df['close'].iloc[-1] # Return data string and current price
-    except Exception as e:
-        return None, None
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=30)
+        return process_data(ohlcv), symbol, "Binance"
+    except Exception as e_binance:
+        # 3. If Binance fails, Try Bybit (Backup)
+        try:
+            exchange = ccxt.bybit()
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=30)
+            return process_data(ohlcv), symbol, "Bybit"
+        except Exception as e_bybit:
+            # If both fail, return the error message
+            return None, symbol, f"Binance Error: {e_binance} | Bybit Error: {e_bybit}"
 
-# --- 3. THE STRATEGY BRAIN ---
+def process_data(ohlcv):
+    """Converts raw data to readable text"""
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    
+    # Return the last 15 candles as text
+    return df.tail(15).to_string(index=False)
+
+# --- 3. THE STRATEGY ---
 system_prompt = """
-You are an Algorithmic Trading Bot. 
-I will give you the last 20 candles of market data (Open, High, Low, Close).
-Analyze the trend and volatility based on these numbers.
+You are a Crypto Signal Generator.
+I will provide recent market data (Open, High, Low, Close).
 
-STRATEGY:
-1. Identify the trend (Higher Highs = Long, Lower Lows = Short).
-2. Check for "Daily Low Breakout" patterns in the data.
-3. Use the current price as Entry.
+STRATEGY INSTRUCTIONS:
+1. **Trend**: Identify if Highs/Lows are increasing (UP) or decreasing (DOWN).
+2. **Setup**: Look for the "Daily Low Breakout" logic inside the data numbers.
+3. **Signal**:
+   - If Bullish: Entry at current price. SL below lowest recent low.
+   - If Bearish: Entry at current price. SL above highest recent high.
 
 OUTPUT FORMAT (STRICT):
-If valid trade found, output:
 #[COIN] #[DIRECTION]
 Entry: [Current Price]
-Leverage: [Calc 2x-10x]
-TP: [TP1] [TP2] [TP3] [TP4]
-SL: [Calc SL]
+Leverage: [5X - 10X]
+TP: [TP1 (+2%)] [TP2 (+4%)]
+SL: [Stop Price]
 #SMITH
-
-If market is choppy/unclear, output:
-"❌ Market unclear. No safe entry."
 """
 
 # --- 4. APP INTERFACE ---
-st.title("⚡ Live Market AI Scanner")
-st.write("Enter a coin name (e.g., BTC/USDT) to scan live Binance data.")
+st.title("⚡ Live Market AI Scanner (Fixed)")
+st.write("Enter coin (e.g. `BTCUSDT` or `ETH/USDT`).")
 
-# Input for Coin Name
-symbol = st.text_input("Enter Coin Symbol (Format: BTC/USDT, ETH/USDT)", "BTC/USDT").upper()
-timeframe = st.selectbox("Select Timeframe", ["15m", "1h", "4h", "1d"], index=1)
+user_symbol = st.text_input("Symbol", "BTC/USDT")
+timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h"], index=1)
 
-if st.button("🔴 Fetch Live Data & Scan"):
-    with st.spinner(f"Connecting to Binance... Fetching {symbol} data..."):
+if st.button("🔴 Scan Market"):
+    with st.spinner(f"Fetching data for {user_symbol}..."):
         
-        # 1. Get Real Data
-        market_data_text, current_price = fetch_market_data(symbol, timeframe)
+        # Get Data
+        data_text, fixed_symbol, source = fetch_market_data(user_symbol, timeframe)
         
-        if market_data_text:
-            st.success(f"✅ Data Received. Current Price: {current_price}")
+        if data_text is not None:
+            st.success(f"✅ Data fetched from **{source}** for **{fixed_symbol}**")
             
-            # Show the data to user (Optional, hidden in expander)
-            with st.expander("View Raw Data"):
-                st.code(market_data_text)
+            # Show Data used (Debug)
+            with st.expander("See Raw Data"):
+                st.code(data_text)
 
-            # 2. Ask AI to analyze it
-            with st.spinner("AI analyzing price action..."):
+            # AI Analysis
+            with st.spinner("AI is calculating signal..."):
                 try:
-                    # We send the TEXT data instead of an image
-                    full_prompt = system_prompt + f"\n\nHere is the {symbol} market data:\n" + market_data_text
+                    full_prompt = f"{system_prompt}\n\nDATA FOR {fixed_symbol}:\n{data_text}"
                     response = model.generate_content(full_prompt)
                     st.code(response.text, language="markdown")
                 except Exception as e:
                     st.error(f"AI Error: {e}")
         else:
-            st.error("❌ Could not fetch data. Make sure the symbol is correct (e.g., 'BTC/USDT').")
+            st.error(f"❌ Failed to fetch data. Error details:\n{source}")
