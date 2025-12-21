@@ -14,24 +14,21 @@ try:
 except:
     st.error("⚠️ API Key Missing. Check Secrets.")
 
-# --- 2. DATA FETCHER (USDT Supported) ---
+# --- 2. DATA FETCHER (FIXED) ---
 def fetch_market_data(symbol, timeframe='1h'):
     """
-    Fetches USDT data from Yahoo Finance (Bypasses Binance Ban).
-    Converts 'BTC/USDT' -> 'BTC-USDT'.
+    Fetches USDT data from Yahoo Finance.
     """
     # 1. Format Symbol for Yahoo Finance
-    # Yahoo uses dashes: BTC-USDT, ETH-USDT, SOL-USDT
+    # Yahoo uses dashes: BTC-USDT, ETH-USDT
     clean_symbol = symbol.replace("/", "-").upper()
     
-    # If user just typed "BTC", default to BTC-USDT (Tether)
+    # If user just typed "BTC", add "-USDT"
     if "-" not in clean_symbol:
         clean_symbol += "-USDT"
 
     try:
         # 2. Define Timeframe mapping
-        # Yahoo requires specific 'period' for intraday data
-        # 15m needs '5d' period, 1h needs '1mo' period to work well
         period_map = {'15m': '5d', '1h': '1mo', '4h': '1mo', '1d': '1y'}
         chosen_period = period_map.get(timeframe, '1mo')
         
@@ -39,8 +36,11 @@ def fetch_market_data(symbol, timeframe='1h'):
         ticker = yf.Ticker(clean_symbol)
         df = ticker.history(period=chosen_period, interval=timeframe)
         
+        # --- THE FIX WAS HERE ---
+        # Before, this line caused a crash because it only returned 2 items.
+        # Now it returns 3 items (None, Symbol, 0) to match the rest of the app.
         if df.empty:
-            return None, clean_symbol
+            return None, clean_symbol, 0
             
         # 4. Clean Data
         df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
@@ -81,7 +81,7 @@ SL: [Stop Price]
 """
 
 # --- 4. APP INTERFACE ---
-st.title("⚡ Live USDT Scanner (Unblocked)")
+st.title("⚡ Live USDT Scanner (Fixed)")
 st.write("Enter coin (e.g. `BTC` or `ETH`). Fetches **USDT** prices.")
 
 col1, col2 = st.columns(2)
@@ -112,4 +112,4 @@ if st.button("🔴 Scan USDT Market"):
                 except Exception as e:
                     st.error(f"AI Error: {e}")
         else:
-            st.error(f"❌ Could not find data for {symbol_used}. Try typing 'BTC' or 'ETH'.")
+            st.error(f"❌ Could not find data for **{symbol_used}**. Try typing just 'BTC' or 'ETH'.")
