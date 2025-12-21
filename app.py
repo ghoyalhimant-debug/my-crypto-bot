@@ -14,39 +14,6 @@ except:
 
 # 2. THE AI INSTRUCTIONS
 system_prompt = """
-You are an expert Crypto Technical Analyst.
-Analyze the chart image provided.
-Output format:
-1. TREND: Bullish/Bearish/Neutral (and why).
-2. KEY LEVELS: Support & Resistance.
-3. PATTERNS: Any chart patterns or candles?
-4. TRADE SETUP:
-   - ENTRY: price area
-   - STOP LOSS: price
-   - TAKE PROFIT: price
-"""
-
-# 3. THE WEBSITE LAYOUT
-st.title("🚀 AI Crypto Analyst")
-st.write("Upload your chart image below.")
-
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg"])
-
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption='Uploaded Chart', use_column_width=True)
-    
-    if st.button("Generate Analysis"):
-        if 'model' in locals():
-            with st.spinner("Analyzing candles..."):
-                try:
-                    response = model.generate_content([system_prompt, image])
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        else:
-            st.error("AI Model not loaded. Check API Key.")
-system_prompt = """
 You are a strict algorithmic trading assistant.
 Analyze the chart image based on the user's specific BREAKOUT STRATEGY.
 
@@ -85,4 +52,26 @@ If the criteria ARE met, output purely this data card:
 ---
 *(Note: SL Risk is approx [X]% on equity)*
 """
+
+# 3. THE WEBSITE LAYOUT
+st.title("🚀 AI Crypto Analyst")
+st.write("Upload your chart image below.")
+
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Uploaded Chart', use_column_width=True)
+    
+    if st.button("Generate Analysis"):
+        if 'model' in locals():
+            with st.spinner("Analyzing candles..."):
+                try:
+                    response = model.generate_content([system_prompt, image])
+                    st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        else:
+            st.error("AI Model not loaded. Check API Key.")
+
 
