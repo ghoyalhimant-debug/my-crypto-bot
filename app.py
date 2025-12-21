@@ -5,111 +5,95 @@ import pandas as pd
 import time
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Unlimited AI Trader", layout="centered")
+st.set_page_config(page_title="Auto-Fixing AI Trader", layout="centered")
 
-# --- 1. SETUP AI (With Backup Models) ---
+# --- 1. SETUP AI (Self-Healing) ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    
-    # We create a list of models to try. 
-    # 'gemini-1.5-flash' is the Standard (1500 req/day free).
-    # 'gemini-1.5-flash-8b' is the High-Speed version.
-    model_name = 'gemini-1.5-flash' 
-    model = genai.GenerativeModel(model_name)
-    
 except Exception as e:
     st.error(f"⚠️ API Key Error: {e}")
 
-# --- 2. DATA FETCHER (Kraken - Works Everywhere) ---
+def get_working_model():
+    """
+    Tries to find a working model automatically.
+    Priority: 2.0 Flash (High Limit) -> 2.5 Flash Lite -> 2.5 Flash (Low Limit)
+    """
+    # List of models to try in order
+    model_candidates = [
+        'gemini-2.0-flash',       # Standard Workhorse (Likely 1500/day)
+        'gemini-2.5-flash-lite',  # New Lightweight (High Speed)
+        'gemini-2.5-flash',       # Premium (Low Limit 20/day)
+        'gemini-pro'              # Old Reliable Backup
+    ]
+    
+    # We return the whole list so the app can loop through them if one fails
+    return model_candidates
+
+# --- 2. DATA FETCHER (Kraken - Works Worldwide) ---
 def fetch_data(symbol, timeframe):
     """
     Fetches real USDT data from Kraken.
     """
     try:
         exchange = ccxt.kraken()
-        
-        # Format Symbol: Kraken expects 'BTC/USDT'
         clean_symbol = symbol.upper().replace("-", "/")
         if "/" not in clean_symbol:
             clean_symbol += "/USDT"
             
-        # Fetch Candles
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=30)
-        
-        # Process Data
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         
-        current_price = df['close'].iloc[-1]
-        data_text = df.tail(15).to_string(index=False)
-        
-        return data_text, clean_symbol, current_price
-        
-    except Exception as e:
+        return df.tail(15).to_string(index=False), clean_symbol, df['close'].iloc[-1]
+    except:
         return None, symbol, 0
 
 # --- 3. THE STRATEGY BRAIN ---
 def get_system_prompt(mode):
-    base_prompt = """
-    You are a Crypto Signal Generator. Analyze the provided market data.
-    Determine the Trend and find a Setup.
-    """
-
-    if mode == "🟢 SPOT (Safe)":
-        return base_prompt + """
-        **MODE: SPOT TRADING**
-        - No Leverage.
-        - Look for Trend Reversals.
-        - Output: #[COIN] #SPOT #LONG ...
-        """
+    base_prompt = "You are a Crypto Signal Generator. Analyze the data and find a trade setup."
     
+    if mode == "🟢 SPOT (Safe)":
+        return base_prompt + "\nMODE: SPOT. No Leverage. Look for Reversals. Output: #[COIN] #SPOT #LONG..."
     elif mode == "🟡 SCALPING (Normal)":
-        return base_prompt + """
-        **MODE: SCALPING**
-        - Leverage: 2x-10x.
-        - Max Risk: 25% of margin.
-        - Output: #[COIN] #[DIRECTION] #SCALP ...
-        """
-
+        return base_prompt + "\nMODE: SCALPING. Lev 2-10x. Max Risk 25%. Output: #[COIN] #[DIRECTION] #SCALP..."
     elif mode == "🔴 RISK/REWARD (High Risk)":
-        return base_prompt + """
-        **MODE: HIGH RISK**
-        - Leverage: 10x-50x.
-        - Max Risk: 90% of margin.
-        - Output: #[COIN] #[DIRECTION] #RISK_TRADE ...
-        """
+        return base_prompt + "\nMODE: DEGEN. Lev 10-50x. Max Risk 90%. Output: #[COIN] #[DIRECTION] #RISK_TRADE..."
+    
     return base_prompt
 
-# --- 4. SAFE AI CALLER (Prevents Crashing) ---
-def ask_ai_safely(full_prompt):
+# --- 4. ROBUST AI CALLER (The Fixer) ---
+def ask_ai_smartly(full_prompt):
     """
-    Tries to talk to AI. If rate limit hit, waits 2 seconds and tries again.
+    Loops through models until one works.
     """
-    try:
-        response = model.generate_content(full_prompt)
-        return response.text
-    except Exception as e:
-        if "429" in str(e):
-            st.warning("⏳ Too fast! Cooling down for 5 seconds...")
-            time.sleep(5)
-            try:
-                # Retry once
-                response = model.generate_content(full_prompt)
-                return response.text
-            except:
-                return "❌ Daily Quota Exceeded. Please try again tomorrow or create a new API Key."
-        else:
-            return f"❌ AI Error: {e}"
+    models_to_try = get_working_model()
+    
+    for model_name in models_to_try:
+        try:
+            # Try to load and use the model
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(full_prompt)
+            return response.text, model_name # Success!
+            
+        except Exception as e:
+            error_msg = str(e)
+            # If 404 (Not Found) or 429 (Quota), just continue to next model
+            if "404" in error_msg or "not found" in error_msg.lower():
+                continue 
+            elif "429" in error_msg or "quota" in error_msg.lower():
+                continue
+            else:
+                return f"❌ Error: {e}", model_name
+
+    return "❌ All AI models failed. Please check your API Key.", "None"
 
 # --- 5. APP INTERFACE ---
-st.title("🤖 Multi-Channel AI (Unlimited)")
-st.write("Fixed: Uses Standard Model (1500 scans/day).")
+st.title("🤖 Auto-Fixing AI Trader")
+st.caption("Auto-switches models to find one that works.")
 
-# CHANNEL SELECTOR
-mode = st.radio("Channel Mode:", 
-    ["🟢 SPOT (Safe)", "🟡 SCALPING (Normal)", "🔴 RISK/REWARD (High Risk)"], 
-    horizontal=True)
+# Channel Selector
+mode = st.radio("Channel:", ["🟢 SPOT (Safe)", "🟡 SCALPING (Normal)", "🔴 RISK/REWARD (High Risk)"], horizontal=True)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -121,20 +105,20 @@ with col2:
 if st.button(f"⚡ Scan {symbol}"):
     with st.spinner(f"Scanning {symbol} on Kraken..."):
         
-        # Get Data
+        # 1. Get Data
         data_text, clean_symbol, price = fetch_data(symbol, timeframe)
         
         if data_text:
             st.success(f"Price: **{price} USDT**")
             
-            # AI Analysis
-            with st.spinner("Analyzing..."):
+            # 2. Analyze with Auto-Switching AI
+            with st.spinner("Trying different AI models..."):
                 prompt = get_system_prompt(mode)
                 full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
                 
-                # Use the Safe Function
-                result = ask_ai_safely(full_prompt)
+                result, used_model = ask_ai_smartly(full_prompt)
                 
                 st.code(result, language="markdown")
+                st.caption(f"✅ Analysis generated using: **{used_model}**")
         else:
-            st.error(f"❌ Could not find {symbol}. Check spelling.")
+            st.error(f"❌ Could not find data for {symbol}.")
