@@ -1,86 +1,90 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
+import ccxt
+import pandas as pd
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Deep AI Analyst", layout="centered")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Live AI Trader", layout="centered")
 
-# --- 1. SETUP THE AI ---
+# --- 1. SETUP AI ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    # NOTE: Ensure you use the correct model version available to your key
-    model = genai.GenerativeModel('gemini-2.5-flash') 
-except Exception as e:
-    st.error("⚠️ API Key Error. Check Streamlit Secrets.")
+    model = genai.GenerativeModel('gemini-2.5-flash')
+except:
+    st.error("⚠️ API Key Missing. Check Secrets.")
 
-# --- 2. THE MASTER BRAIN (DEEP ANALYSIS) ---
+# --- 2. SETUP BINANCE CONNECTION ---
+def fetch_market_data(symbol, timeframe='1h'):
+    """Fetches the last 50 candles from Binance"""
+    try:
+        exchange = ccxt.binance()
+        # Fetch OHLCV data (Open, High, Low, Close, Volume)
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=50)
+        
+        # Convert to readable format
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        
+        # Create a text string of data for the AI to read
+        data_string = df.tail(20).to_string(index=False)
+        return data_string, df['close'].iloc[-1] # Return data string and current price
+    except Exception as e:
+        return None, None
+
+# --- 3. THE STRATEGY BRAIN ---
 system_prompt = """
-You are an Elite Crypto Technical Analyst & Signal Generator.
-Analyze the chart image deeply to find the **BEST** available trade setup using ANY of the following strategies.
+You are an Algorithmic Trading Bot. 
+I will give you the last 20 candles of market data (Open, High, Low, Close).
+Analyze the trend and volatility based on these numbers.
 
-### 🕵️‍♂️ ANALYSIS PROTOCOL (Look for these)
-1. **Candlestick Patterns**: Engulfing, Hammer, Shooting Star, Morning/Evening Star, Doji reversals.
-2. **Chart Patterns**: Flags, Pennants, Wedges, Triangles, Head & Shoulders, Double Top/Bottom.
-3. **Price Action**:
-   - **Support Breakdown**: Price closing BELOW a key support level (SHORT signal).
-   - **Resistance Breakout**: Price closing ABOVE a key resistance level (LONG signal).
-   - **Trendline Breaks**: Clean break of a diagonal trendline.
-4. **Your Special Strategy**: The "Daily Low Breakout" (Break of Daily Low's High + Retest).
+STRATEGY:
+1. Identify the trend (Higher Highs = Long, Lower Lows = Short).
+2. Check for "Daily Low Breakout" patterns in the data.
+3. Use the current price as Entry.
 
-### 🧠 DECISION LOGIC
-- Scan the chart for ALL above patterns.
-- Identify the **Strongest Signal** (Confluence is best).
-- Determine Direction: **LONG** or **SHORT**.
-
-### 💰 MONEY MANAGEMENT (Auto-Calc)
-- **Leverage**: Calculate specifically to keep risk LOW (between 2x - 10x).
-  - *Rule*: If the Stop Loss distance is wide, Lower the leverage. If tight, Higher leverage. Max 25% equity risk.
-- **Entry**: Current Price or clear Retest Level.
-- **Stop Loss (SL)**: 
-  - For LONG: Just below the structure/candle low.
-  - For SHORT: Just above the structure/candle high.
-- **Take Profits (TP)**:
-  - TP1 (1:1), TP2 (1:2), TP3 (1:3), TP4 (1:4).
-
-### 📝 OUTPUT FORMAT (STRICT TELEGRAM STYLE)
-If a valid setup is found, output **ONLY** the text block below.
-Replace [COIN] with the name seen on chart (e.g., ETHUSDT).
-Replace [REASON] with the strategy name (e.g., Bull Flag Breakout).
-
+OUTPUT FORMAT (STRICT):
+If valid trade found, output:
 #[COIN] #[DIRECTION]
-([REASON])
-
-Entry: [Entry Price]
-
-Leverage: [Leverage]X
-
-TP: [TP1]  [TP2]  [TP3]  [TP4]
-
-SL: [SL Price]
-
+Entry: [Current Price]
+Leverage: [Calc 2x-10x]
+TP: [TP1] [TP2] [TP3] [TP4]
+SL: [Calc SL]
 #SMITH
 
---------------------------------
-**If NO clear trade is visible, output:**
-"❌ No High-Probability Trade Found. Market is ranging or unclear."
+If market is choppy/unclear, output:
+"❌ Market unclear. No safe entry."
 """
 
-# --- 3. THE APP INTERFACE ---
-st.title("🧠 Deep-Scan AI Trader")
-st.markdown("Analyzing: **Patterns, Breakouts, Candles & Price Action**")
+# --- 4. APP INTERFACE ---
+st.title("⚡ Live Market AI Scanner")
+st.write("Enter a coin name (e.g., BTC/USDT) to scan live Binance data.")
 
-uploaded_file = st.file_uploader("Upload Chart Screenshot", type=["jpg", "png", "jpeg"])
+# Input for Coin Name
+symbol = st.text_input("Enter Coin Symbol (Format: BTC/USDT, ETH/USDT)", "BTC/USDT").upper()
+timeframe = st.selectbox("Select Timeframe", ["15m", "1h", "4h", "1d"], index=1)
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption='Chart Preview', use_column_width=True)
-    
-    if st.button("🔍 SCAN MARKET"):
-        if 'model' in locals():
-            with st.spinner("Analyzing Market Structure, Patterns & Candles..."):
+if st.button("🔴 Fetch Live Data & Scan"):
+    with st.spinner(f"Connecting to Binance... Fetching {symbol} data..."):
+        
+        # 1. Get Real Data
+        market_data_text, current_price = fetch_market_data(symbol, timeframe)
+        
+        if market_data_text:
+            st.success(f"✅ Data Received. Current Price: {current_price}")
+            
+            # Show the data to user (Optional, hidden in expander)
+            with st.expander("View Raw Data"):
+                st.code(market_data_text)
+
+            # 2. Ask AI to analyze it
+            with st.spinner("AI analyzing price action..."):
                 try:
-                    response = model.generate_content([system_prompt, image])
+                    # We send the TEXT data instead of an image
+                    full_prompt = system_prompt + f"\n\nHere is the {symbol} market data:\n" + market_data_text
+                    response = model.generate_content(full_prompt)
                     st.code(response.text, language="markdown")
                 except Exception as e:
-                    st.error(f"Analysis Error: {e}")
+                    st.error(f"AI Error: {e}")
+        else:
+            st.error("❌ Could not fetch data. Make sure the symbol is correct (e.g., 'BTC/USDT').")
