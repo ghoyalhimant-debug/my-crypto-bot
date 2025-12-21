@@ -4,7 +4,7 @@ import yfinance as yf
 import pandas as pd
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="USDT Live Scanner", layout="centered")
+st.set_page_config(page_title="Universal Crypto Scanner", layout="centered")
 
 # --- 1. SETUP AI ---
 try:
@@ -14,49 +14,47 @@ try:
 except:
     st.error("⚠️ API Key Missing. Check Secrets.")
 
-# --- 2. DATA FETCHER (FIXED) ---
+# --- 2. SMART DATA FETCHER (With Fallback) ---
 def fetch_market_data(symbol, timeframe='1h'):
     """
-    Fetches USDT data from Yahoo Finance.
+    Tries to fetch USDT data. If fails, falls back to USD.
     """
-    # 1. Format Symbol for Yahoo Finance
-    # Yahoo uses dashes: BTC-USDT, ETH-USDT
-    clean_symbol = symbol.replace("/", "-").upper()
-    
-    # If user just typed "BTC", add "-USDT"
-    if "-" not in clean_symbol:
-        clean_symbol += "-USDT"
+    # Clean the input (remove /USDT if user typed it)
+    # Example: "BTC/USDT" -> "BTC"
+    base_coin = symbol.upper().replace("/USDT", "").replace("-USDT", "").replace("USDT", "").replace("/", "")
 
-    try:
-        # 2. Define Timeframe mapping
-        period_map = {'15m': '5d', '1h': '1mo', '4h': '1mo', '1d': '1y'}
-        chosen_period = period_map.get(timeframe, '1mo')
-        
-        # 3. Fetch Data
-        ticker = yf.Ticker(clean_symbol)
-        df = ticker.history(period=chosen_period, interval=timeframe)
-        
-        # --- THE FIX WAS HERE ---
-        # Before, this line caused a crash because it only returned 2 items.
-        # Now it returns 3 items (None, Symbol, 0) to match the rest of the app.
-        if df.empty:
-            return None, clean_symbol, 0
+    # Define the pair variations to try
+    # Priority 1: USDT pair
+    # Priority 2: USD pair (Always works as backup)
+    tickers_to_try = [f"{base_coin}-USDT", f"{base_coin}-USD"]
+
+    # Map timeframe to Yahoo's required 'period'
+    period_map = {'15m': '5d', '1h': '1mo', '4h': '1mo', '1d': '1y'}
+    chosen_period = period_map.get(timeframe, '1mo')
+
+    for ticker_name in tickers_to_try:
+        try:
+            ticker = yf.Ticker(ticker_name)
+            df = ticker.history(period=chosen_period, interval=timeframe)
             
-        # 4. Clean Data
-        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+            if not df.empty:
+                # FOUND DATA!
+                df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+                current_price = df['Close'].iloc[-1]
+                data_text = df.tail(15).to_string()
+                
+                # Return 3 values: Data, Ticker Name, Price
+                return data_text, ticker_name, current_price
         
-        # Get current price and last 15 candles
-        current_price = df['Close'].iloc[-1]
-        data_text = df.tail(15).to_string()
-        
-        return data_text, clean_symbol, current_price
-        
-    except Exception as e:
-        return None, f"Error: {e}", 0
+        except Exception:
+            continue # Try the next ticker in the list
+
+    # If loop finishes and nothing found:
+    return None, base_coin, 0
 
 # --- 3. THE STRATEGY ---
 system_prompt = """
-You are a Crypto Signal Generator (USDT Pairs).
+You are a Crypto Signal Generator.
 I will provide recent market data for a specific coin.
 
 STRATEGY INSTRUCTIONS:
@@ -81,23 +79,23 @@ SL: [Stop Price]
 """
 
 # --- 4. APP INTERFACE ---
-st.title("⚡ Live USDT Scanner (Fixed)")
-st.write("Enter coin (e.g. `BTC` or `ETH`). Fetches **USDT** prices.")
+st.title("⚡ Universal Crypto Scanner")
+st.write("Enter coin name (e.g. `BTC` or `ETH`).")
 
 col1, col2 = st.columns(2)
 with col1:
-    user_symbol = st.text_input("Symbol", "BTC/USDT")
+    user_symbol = st.text_input("Symbol", "BTC")
 with col2:
     timeframe = st.selectbox("Timeframe", ["15m", "1h", "1d"], index=1)
 
-if st.button("🔴 Scan USDT Market"):
-    with st.spinner(f"Fetching {user_symbol} data..."):
+if st.button("🔴 Scan Market"):
+    with st.spinner(f"Searching data for {user_symbol}..."):
         
         # Get Data
         data_text, symbol_used, current_price = fetch_market_data(user_symbol, timeframe)
         
         if data_text:
-            st.success(f"✅ Data fetched for **{symbol_used}** | Price: **{current_price:.4f}**")
+            st.success(f"✅ Found data for **{symbol_used}** | Price: **{current_price:.4f}**")
             
             # Show Data used (Debug)
             with st.expander("See Raw Candle Data"):
@@ -112,4 +110,4 @@ if st.button("🔴 Scan USDT Market"):
                 except Exception as e:
                     st.error(f"AI Error: {e}")
         else:
-            st.error(f"❌ Could not find data for **{symbol_used}**. Try typing just 'BTC' or 'ETH'.")
+            st.error(f"❌ Could not find data for **{user_symbol}**. Try checking the spelling.")
