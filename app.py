@@ -14,131 +14,135 @@ try:
 except:
     st.error("⚠️ API Key Missing. Please set GEMINI_API_KEY in secrets.")
 
-# --- 2. DATA FETCHER (Binance Local/Proxy) ---
+# --- 2. DATA FETCHER (KRAKEN - Works Everywhere) ---
 def fetch_data(symbol, timeframe):
     """
-    Fetches data. Works best running LOCALLY in India.
+    Fetches real USDT data from Kraken.
+    Works in India and on Cloud (No Blocking).
     """
-    clean_symbol = symbol.upper().replace("-", "/")
-    if "/" not in clean_symbol:
-        clean_symbol += "/USDT"
-    
-    # Try multiple Binance endpoints to bypass blocks
-    urls = [
-        'https://api.binance.com', 'https://api1.binance.com', 
-        'https://api2.binance.com', 'https://api3.binance.com'
-    ]
-    
-    exchange = ccxt.binance({'enableRateLimit': True})
-    
-    for url in urls:
-        try:
-            exchange.urls['api']['public'] = url
-            ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=50)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            return df.tail(20).to_string(index=False), clean_symbol, df['close'].iloc[-1]
-        except:
-            continue
+    try:
+        exchange = ccxt.kraken()
+        
+        # Format Symbol: Kraken expects 'BTC/USDT'
+        clean_symbol = symbol.upper().replace("-", "/")
+        if "/" not in clean_symbol:
+            # If user types "BTC", assume "BTC/USDT"
+            clean_symbol += "/USDT"
             
-    return None, clean_symbol, 0
+        # Fetch Candles
+        ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=30)
+        
+        # Process Data
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        
+        current_price = df['close'].iloc[-1]
+        data_text = df.tail(15).to_string(index=False)
+        
+        return data_text, clean_symbol, current_price
+        
+    except Exception as e:
+        return None, symbol, 0
 
-# --- 3. DYNAMIC STRATEGY BRAIN ---
+# --- 3. THE 3-CHANNEL STRATEGY BRAIN ---
 def get_system_prompt(mode):
     """
-    Returns the specific instructions for the selected Channel.
+    Switches the AI strategy based on your selected channel.
     """
     base_prompt = """
-    You are a Crypto Signal Generator. Analyze the provided market data.
-    Determine the Trend and find a Setup (Breakout, Retest, Reversal).
+    You are a Professional Crypto Signal Generator. 
+    Analyze the provided market data and finding the best trade setup.
     """
 
-    if mode == "🟢 SPOT (Safe)":
+    if mode == "🟢 SPOT (Safe/Swing)":
         return base_prompt + """
-        **MODE: SPOT TRADING (Swing)**
-        - **Frequency**: High quality, weekly setups (2-3/week).
+        **STRATEGY: SPOT SWING**
+        - **Goal**: Daily/Weekly trend capture.
         - **Leverage**: NONE (Spot).
-        - **Stop Loss**: Wide/Safe (Support levels).
-        - **Strategy**: Look for strong 4H/Daily trend reversals.
+        - **Stop Loss**: Wide & Safe (Below major support).
+        - **Risk**: Low.
         
         **OUTPUT FORMAT:**
         #[COIN] #SPOT #LONG
         Entry: [Price]
-        Target: [TP1] [TP2]
+        Targets: [TP1] - [TP2]
         SL: [Price]
         #SMITH_SPOT
         """
     
-    elif mode == "🟡 SCALPING (Normal)":
+    elif mode == "🟡 SCALPING (Intraday)":
         return base_prompt + """
-        **MODE: SCALPING (Intraday)**
-        - **Frequency**: Daily setups (4-5/day).
-        - **Leverage**: 2x - 10x (Strict).
-        - **Risk Rule**: Max Loss at SL must be approx 20-25% of margin.
-        - **Strategy**: Quick 15m/1h breakouts.
+        **STRATEGY: INTRADAY SCALPING**
+        - **Goal**: Quick 15m/1h flips.
+        - **Leverage**: 2x - 10x.
+        - **Stop Loss**: Tight. Max risk 20-25% of margin.
+        - **Risk**: Medium.
         
         **OUTPUT FORMAT:**
-        #[COIN] #[DIRECTION]
+        #[COIN] #[DIRECTION] #SCALP
         Entry: [Price]
-        Leverage: [Calc 2-10x]
-        TP: [TP1] [TP2] [TP3]
+        Leverage: [Calc 2x-10x]
+        TP: [TP1]  [TP2]  [TP3]
         SL: [Price]
         #SMITH_SCALP
         """
 
-    elif mode == "🔴 RISK/REWARD (High Risk)":
+    elif mode == "🔴 RISK/REWARD (Degen)":
         return base_prompt + """
-        **MODE: HIGH RISK / REWARD (Degen)**
-        - **Frequency**: Sniper entries (2/day).
-        - **Leverage**: 10x - 50x (High).
-        - **Risk Rule**: Stop Loss can risk 80-90% of margin (Tight SL, High Lev).
-        - **Strategy**: Hunting wicks, liquidity sweeps, aggressive reversals.
+        **STRATEGY: HIGH RISK SNIPER**
+        - **Goal**: Catching wicks and aggressive reversals.
+        - **Leverage**: 10x - 50x.
+        - **Stop Loss**: Very Tight. Max risk 80-90% of margin (High Reward).
+        - **Risk**: Very High.
         
         **OUTPUT FORMAT:**
         #[COIN] #[DIRECTION] #RISK_TRADE
         Entry: [Price]
-        Leverage: [Calc 10-50x]
-        TP: [TP1] [TP2] [TP3] [TP4]
+        Leverage: [Calc 10x-50x]
+        TP: [TP1]  [TP2]  [TP3]  [TP4]
         SL: [Price]
         #SMITH_DEGEN
         """
 
 # --- 4. APP INTERFACE ---
-st.title("🤖 Master Signal Generator")
-st.write("Generate signals for your 3 Telegram Channels.")
+st.title("📲 3-Channel Signal Generator")
+st.write("Select a channel mode to generate the perfect signal.")
 
-# 1. SELECT CHANNEL
+# CHANNEL SELECTOR
 mode = st.radio("Select Telegram Channel:", 
-    ["🟢 SPOT (Safe)", "🟡 SCALPING (Normal)", "🔴 RISK/REWARD (High Risk)"], 
+    ["🟢 SPOT (Safe/Swing)", "🟡 SCALPING (Intraday)", "🔴 RISK/REWARD (Degen)"], 
     horizontal=True)
 
-# 2. INPUTS
 col1, col2 = st.columns(2)
 with col1:
-    symbol = st.text_input("Coin Symbol", "BTC")
+    symbol = st.text_input("Coin Symbol", "BTC") # Just type BTC, ETH, etc.
 with col2:
-    # Auto-select timeframe based on mode
-    default_tf = 2 if "SPOT" in mode else 1 # Index 2 is 4h, 1 is 1h
+    # Auto-select best timeframe for the mode
+    default_tf = 2 if "SPOT" in mode else 1 
     timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=default_tf)
 
-# 3. GENERATE
 if st.button(f"⚡ Generate {mode.split()[1]} Signal"):
-    with st.spinner(f"Scanning {symbol} for {mode} Setup..."):
+    with st.spinner(f"Scanning {symbol} on Kraken..."):
         
         # Get Data
         data_text, clean_symbol, price = fetch_data(symbol, timeframe)
         
         if data_text:
-            st.success(f"Data Found: {clean_symbol} @ {price}")
+            st.success(f"✅ Data Fetched: **{clean_symbol}** @ **{price} USDT**")
             
-            # Get the correct Prompt for the selected mode
-            prompt = get_system_prompt(mode)
-            full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
-            
-            try:
-                response = model.generate_content(full_prompt)
-                st.code(response.text, language="markdown")
-            except Exception as e:
-                st.error(f"AI Error: {e}")
+            # AI Analysis
+            with st.spinner("Calculating Leverage & Targets..."):
+                try:
+                    # 1. Get the correct instructions
+                    prompt = get_system_prompt(mode)
+                    
+                    # 2. Send to Gemini
+                    full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
+                    response = model.generate_content(full_prompt)
+                    
+                    # 3. Show Result
+                    st.code(response.text, language="markdown")
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
         else:
-            st.error("❌ Connection failed. Ensure you are running LOCALLY on Laptop.")
+            st.error(f"❌ Could not find data for {symbol}. Try typing just 'BTC' or 'ETH'.")
