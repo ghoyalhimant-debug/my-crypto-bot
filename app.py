@@ -3,40 +3,53 @@ import google.generativeai as genai
 from PIL import Image
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Crypto Signal Bot", layout="centered")
+st.set_page_config(page_title="Deep AI Analyst", layout="centered")
 
 # --- 1. SETUP THE AI ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    # Check your model version (gemini-1.5-flash or gemini-2.5-flash)
+    # NOTE: Ensure you use the correct model version available to your key
     model = genai.GenerativeModel('gemini-2.5-flash') 
 except Exception as e:
     st.error("⚠️ API Key Error. Check Streamlit Secrets.")
 
-# --- 2. THE SIGNAL GENERATOR BRAIN ---
+# --- 2. THE MASTER BRAIN (DEEP ANALYSIS) ---
 system_prompt = """
-You are a Crypto Signal Generator. 
-Analyze the chart image based on the "Daily Low Breakout" strategy.
+You are an Elite Crypto Technical Analyst & Signal Generator.
+Analyze the chart image deeply to find the **BEST** available trade setup using ANY of the following strategies.
 
-### 1. STRATEGY RULES
-1. **Identify Daily Low**: Lowest candle after 12:00 AM.
-2. **Setup**: Look for a breakout candle closing ABOVE the Daily Low's High.
-3. **Confirmation**: Next candle's LOW must NOT touch the Daily Low's High.
-4. **Direction**: This is a LONG strategy. (If you see the exact reverse scenario for a Short, you may output SHORT).
+### 🕵️‍♂️ ANALYSIS PROTOCOL (Look for these)
+1. **Candlestick Patterns**: Engulfing, Hammer, Shooting Star, Morning/Evening Star, Doji reversals.
+2. **Chart Patterns**: Flags, Pennants, Wedges, Triangles, Head & Shoulders, Double Top/Bottom.
+3. **Price Action**:
+   - **Support Breakdown**: Price closing BELOW a key support level (SHORT signal).
+   - **Resistance Breakout**: Price closing ABOVE a key resistance level (LONG signal).
+   - **Trendline Breaks**: Clean break of a diagonal trendline.
+4. **Your Special Strategy**: The "Daily Low Breakout" (Break of Daily Low's High + Retest).
 
-### 2. CALCULATION RULES
-- **Entry**: The Daily Low Candle's High.
-- **SL**: Just below the Daily Low Candle's Low.
-- **Leverage**: Calculate so max risk is 25%. (Range 2X - 10X).
-- **TPs**: Calculate 4 targets.
+### 🧠 DECISION LOGIC
+- Scan the chart for ALL above patterns.
+- Identify the **Strongest Signal** (Confluence is best).
+- Determine Direction: **LONG** or **SHORT**.
+
+### 💰 MONEY MANAGEMENT (Auto-Calc)
+- **Leverage**: Calculate specifically to keep risk LOW (between 2x - 10x).
+  - *Rule*: If the Stop Loss distance is wide, Lower the leverage. If tight, Higher leverage. Max 25% equity risk.
+- **Entry**: Current Price or clear Retest Level.
+- **Stop Loss (SL)**: 
+  - For LONG: Just below the structure/candle low.
+  - For SHORT: Just above the structure/candle high.
+- **Take Profits (TP)**:
   - TP1 (1:1), TP2 (1:2), TP3 (1:3), TP4 (1:4).
 
-### 3. OUTPUT FORMAT (STRICT)
-If valid, output EXACTLY this format (no other text). 
-Replace [COIN] with the coin name visible on chart (e.g., BTCUSDT).
+### 📝 OUTPUT FORMAT (STRICT TELEGRAM STYLE)
+If a valid setup is found, output **ONLY** the text block below.
+Replace [COIN] with the name seen on chart (e.g., ETHUSDT).
+Replace [REASON] with the strategy name (e.g., Bull Flag Breakout).
 
 #[COIN] #[DIRECTION]
+([REASON])
 
 Entry: [Entry Price]
 
@@ -49,27 +62,25 @@ SL: [SL Price]
 #SMITH
 
 --------------------------------
-If NO valid trade is found, just output: "No Trade Setup Found."
+**If NO clear trade is visible, output:**
+"❌ No High-Probability Trade Found. Market is ranging or unclear."
 """
 
-# --- 3. APP INTERFACE ---
-st.title("📲 Auto-Signal Generator")
-st.write("Upload chart -> Get #SMITH Signal")
+# --- 3. THE APP INTERFACE ---
+st.title("🧠 Deep-Scan AI Trader")
+st.markdown("Analyzing: **Patterns, Breakouts, Candles & Price Action**")
 
-uploaded_file = st.file_uploader("Upload Chart", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("Upload Chart Screenshot", type=["jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption='Chart Preview', use_column_width=True)
     
-    if st.button("Generate Signal"):
+    if st.button("🔍 SCAN MARKET"):
         if 'model' in locals():
-            with st.spinner("Calculating trade levels..."):
+            with st.spinner("Analyzing Market Structure, Patterns & Candles..."):
                 try:
                     response = model.generate_content([system_prompt, image])
-                    
-                    # Display the result in a copy-paste friendly code block
                     st.code(response.text, language="markdown")
-                    
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Analysis Error: {e}")
