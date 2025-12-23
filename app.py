@@ -44,65 +44,49 @@ def fetch_data(symbol, timeframe):
     except Exception as e:
         return None, symbol, 0
 
-# --- 3. THE 3-CHANNEL STRATEGY BRAIN ---
-def get_system_prompt(mode):
-    """
-    Switches the AI strategy based on your selected channel.
-    """
-    base_prompt = """
-    You are a Professional Crypto Signal Generator. 
-    Analyze the provided market data and finding the best trade setup.
-    """
+# --- 3. THE STRATEGY BRAIN (Your Specific Rules) ---
+system_prompt = """
+You are a Strict Algorithmic Trading Bot. 
+Analyze the chart data provided based on the "3-Impulse + 2-Retracement" Strategy.
 
-    if mode == "🟢 SPOT (Safe/Swing)":
-        return base_prompt + """
-        **STRATEGY: SPOT SWING**
-        - **Goal**: Daily/Weekly trend capture.
-        - **Leverage**: NONE (Spot).
-        - **Stop Loss**: Wide & Safe (Below major support).
-        - **Risk**: Low.
-        
-        **OUTPUT FORMAT:**
-        #[COIN] #SPOT #LONG
-        Entry: [Price]
-        Targets: [TP1] - [TP2]
-        SL: [Price]
-        #SMITH_SPOT
-        """
-    
-    elif mode == "🟡 SCALPING (Intraday)":
-        return base_prompt + """
-        **STRATEGY: INTRADAY SCALPING**
-        - **Goal**: Quick 15m/1h flips.
-        - **Leverage**: 2x - 10x.
-        - **Stop Loss**: Tight. Max risk 20-25% of margin.
-        - **Risk**: Medium.
-        
-        **OUTPUT FORMAT:**
-        #[COIN] #[DIRECTION] #SCALP
-        Entry: [Price]
-        Leverage: [Calc 2x-10x]
-        TP: [TP1]  [TP2]  [TP3]
-        SL: [Price]
-        #SMITH_SCALP
-        """
+### 🕒 SESSION TIME
+- Ensure the current analysis considers the session starting from **5:30 AM IST**.
 
-    elif mode == "🔴 RISK/REWARD (Degen)":
-        return base_prompt + """
-        **STRATEGY: HIGH RISK SNIPER**
-        - **Goal**: Catching wicks and aggressive reversals.
-        - **Leverage**: 10x - 50x.
-        - **Stop Loss**: Very Tight. Max risk 80-90% of margin (High Reward).
-        - **Risk**: Very High.
-        
-        **OUTPUT FORMAT:**
-        #[COIN] #[DIRECTION] #RISK_TRADE
-        Entry: [Price]
-        Leverage: [Calc 10x-50x]
-        TP: [TP1]  [TP2]  [TP3]  [TP4]
-        SL: [Price]
-        #SMITH_DEGEN
-        """
+### 📈 LONG STRATEGY RULES
+1. **Impulse Phase**: Look for at least **3 consecutive GREEN candles**.
+   - Condition: Each green candle must break the previous candle's HIGH.
+2. **Retracement Phase**: Immediately after the impulse, look for at least **2 consecutive RED candles**.
+3. **Trade Setup**:
+   - **ENTRY**: Buy Stop at the **Swing High** (Highest price of the 3+ Green candles).
+   - **STOP LOSS (SL)**: The **Swing Low** (Lowest price of the 2+ Red retracement candles).
+   - **TAKE PROFIT (TP)**: 1:2 Risk/Reward Ratio.
+
+### 📉 SHORT STRATEGY RULES
+1. **Impulse Phase**: Look for at least **3 consecutive RED candles**.
+   - Condition: Each red candle must break the previous candle's LOW.
+2. **Retracement Phase**: Immediately after the impulse, look for at least **2 consecutive GREEN candles**.
+3. **Trade Setup**:
+   - **ENTRY**: Sell Stop at the **Swing Low** (Lowest price of the 3+ Red candles).
+   - **STOP LOSS (SL)**: The **Swing High** (Highest price of the 2+ Green retracement candles).
+   - **TAKE PROFIT (TP)**: 1:2 Risk/Reward Ratio.
+
+### 📝 OUTPUT FORMAT (STRICT)
+If a valid pattern is found in the recent data:
+#[COIN] #[DIRECTION]
+**Pattern:** [3 Green + 2 Red] OR [3 Red + 2 Green]
+
+Entry: [Swing High/Low Price]
+
+SL: [Retracement High/Low Price]
+
+TP: [Calculated 1:2 Target]
+
+#SMITH_IMPULSE
+
+--------------------------------
+If pattern is NOT found, output ONLY: 
+"❌ No Impulse Pattern (3+ Trend / 2+ Retrace) found."
+"""
 
 # --- 4. APP INTERFACE ---
 st.title("📲 3-Channel Signal Generator")
