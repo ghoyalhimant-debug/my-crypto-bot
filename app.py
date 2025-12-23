@@ -4,12 +4,11 @@ import ccxt
 import pandas as pd
 import time
 import pytz
-from datetime import datetime
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Impulse Trading Bot", layout="centered")
+st.set_page_config(page_title="Multi-Coin Impulse Scanner", layout="wide")
 
-# --- 1. SETUP AI (Self-Healing) ---
+# --- 1. SETUP AI ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -17,127 +16,105 @@ except Exception as e:
     st.error(f"⚠️ API Key Error: {e}")
 
 def get_working_model():
-    """Tries to find a working model automatically."""
-    return [
-        'gemini-2.5-flash',       
-        'gemini-1.5-flash',       
-        'gemini-1.5-pro'              
-    ]
+    return ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
 
-# --- 2. DATA FETCHER (Kraken - Works Worldwide) ---
+# --- 2. DATA FETCHER ---
 def fetch_data(symbol, timeframe="15m"):
-    """
-    Fetches real USDT data from Kraken.
-    """
     try:
         exchange = ccxt.kraken()
-        clean_symbol = symbol.upper().replace("-", "/")
+        clean_symbol = symbol.strip().upper().replace("-", "/")
         if "/" not in clean_symbol:
             clean_symbol += "/USDT"
             
-        # We need enough candles to see the 3 green + 2 red pattern
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=30)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         
-        # Convert to IST (Indian Standard Time)
+        # IST Time Conversion
         ist = pytz.timezone('Asia/Kolkata')
         df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(ist)
         
-        current_price = df['close'].iloc[-1]
-        
-        # We send the last 15 candles to AI to find the pattern
-        data_text = df.tail(15).to_string(index=False)
-        
-        return data_text, clean_symbol, current_price
-    except Exception as e:
+        return df.tail(15).to_string(index=False), clean_symbol, df['close'].iloc[-1]
+    except:
         return None, symbol, 0
 
-# --- 3. THE STRATEGY BRAIN (Your Specific Rules) ---
+# --- 3. STRATEGY (3 Green / 2 Red) ---
 system_prompt = """
-You are a Strict Algorithmic Trading Bot. 
-Analyze the chart data provided based on the "3-Impulse + 2-Retracement" Strategy.
+You are an Algorithmic Trading Bot.
+Analyze the data for the "3-Impulse + 2-Retracement" Strategy.
 
-### 🕒 SESSION TIME
-- Ensure the current analysis considers the session starting from **5:30 AM IST**.
+RULES:
+1. **LONG**: 3+ Green Candles (Higher Highs) followed by 2+ Red Candles (Retracement).
+   - ENTRY: Swing High. SL: Swing Low. TP: 1:2.
+2. **SHORT**: 3+ Red Candles (Lower Lows) followed by 2+ Green Candles (Retracement).
+   - ENTRY: Swing Low. SL: Swing High. TP: 1:2.
 
-### 📈 LONG STRATEGY RULES
-1. **Impulse Phase**: Look for at least **3 consecutive GREEN candles**.
-   - Condition: Each green candle must break the previous candle's HIGH.
-2. **Retracement Phase**: Immediately after the impulse, look for at least **2 consecutive RED candles**.
-3. **Trade Setup**:
-   - **ENTRY**: Buy Stop at the **Swing High** (Highest price of the 3+ Green candles).
-   - **STOP LOSS (SL)**: The **Swing Low** (Lowest price of the 2+ Red retracement candles).
-   - **TAKE PROFIT (TP)**: 1:2 Risk/Reward Ratio.
-
-### 📉 SHORT STRATEGY RULES
-1. **Impulse Phase**: Look for at least **3 consecutive RED candles**.
-   - Condition: Each red candle must break the previous candle's LOW.
-2. **Retracement Phase**: Immediately after the impulse, look for at least **2 consecutive GREEN candles**.
-3. **Trade Setup**:
-   - **ENTRY**: Sell Stop at the **Swing Low** (Lowest price of the 3+ Red candles).
-   - **STOP LOSS (SL)**: The **Swing High** (Highest price of the 2+ Green retracement candles).
-   - **TAKE PROFIT (TP)**: 1:2 Risk/Reward Ratio.
-
-### 📝 OUTPUT FORMAT (STRICT)
-If a valid pattern is found in the recent data:
+OUTPUT FORMAT (STRICT):
+If Pattern Found:
 #[COIN] #[DIRECTION]
-**Pattern:** [3 Green + 2 Red] OR [3 Red + 2 Green]
-
-Entry: [Swing High/Low Price]
-
-SL: [Retracement High/Low Price]
-
-TP: [Calculated 1:2 Target]
-
+**Pattern:** [3 Green+2 Red] or [3 Red+2 Green]
+Entry: [Price]
+SL: [Price]
+TP: [Price]
 #SMITH_IMPULSE
 
---------------------------------
-If pattern is NOT found, output ONLY: 
-"❌ No Impulse Pattern (3+ Trend / 2+ Retrace) found."
+If NOT Found:
+"NO_TRADE"
 """
 
-# --- 4. ROBUST AI CALLER ---
+# --- 4. AI CALLER ---
 def ask_ai_smartly(full_prompt):
-    models_to_try = get_working_model()
-    for model_name in models_to_try:
+    for model_name in get_working_model():
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(full_prompt)
-            return response.text, model_name
-        except Exception:
+            return response.text
+        except:
             continue
-    return "❌ AI Error: All models busy.", "None"
+    return "Error: AI Busy"
 
 # --- 5. APP INTERFACE ---
-st.title("🚀 Impulse Strategy Bot (5:30 AM IST)")
-st.caption("Strategy: 3+ Impulse Candles -> 2+ Retracement Candles -> Entry at Breakout")
+st.title("🚀 Multi-Coin Impulse Scanner")
+st.markdown("**Strategy:** 3 Impulse Candles + 2 Retracement Candles (15m Timeframe)")
 
-col1, col2 = st.columns(2)
-with col1:
-    symbol = st.text_input("Symbol", "BTC")
-with col2:
-    # Fixed to 15m as per your strategy
-    st.info("Timeframe: **15 min** (Fixed)") 
-    timeframe = "15m"
+# INPUT: Comma separated list
+default_coins = "BTC, ETH, SOL, DOGE, XRP, PEPE, WIF, SUI"
+user_input = st.text_area("Enter Coins to Scan (comma separated):", default_coins, height=70)
+timeframe = "15m"
 
-if st.button(f"⚡ Scan {symbol}"):
-    with st.spinner(f"Scanning {symbol} for 3-Green/2-Red pattern..."):
+if st.button("⚡ START BULK SCAN"):
+    # Split string into a list: ['BTC', 'ETH', 'SOL'...]
+    coin_list = [x.strip() for x in user_input.split(',')]
+    
+    st.write(f"🔍 Scanning **{len(coin_list)}** coins...")
+    progress_bar = st.progress(0)
+    
+    # Create a container for results
+    results_container = st.container()
+    
+    for i, coin in enumerate(coin_list):
+        # Update Progress
+        progress_bar.progress((i + 1) / len(coin_list))
         
-        # 1. Get Data
-        data_text, clean_symbol, price = fetch_data(symbol, timeframe)
+        # 1. Fetch Data
+        data_text, clean_symbol, price = fetch_data(coin, timeframe)
         
         if data_text:
-            st.success(f"Current Price: **{price} USDT**")
-            
-            # Show Data (Optional)
-            with st.expander("Check Candle Data"):
-                st.code(data_text)
-            
             # 2. Analyze
-            with st.spinner("Counting candles..."):
-                full_prompt = f"{system_prompt}\n\nMARKET DATA (IST Time):\n{data_text}"
-                result, used_model = ask_ai_smartly(full_prompt)
-                st.code(result, language="markdown")
-        else:
-            st.error(f"❌ Could not find data for {symbol}.")
+            full_prompt = f"{system_prompt}\n\nDATA FOR {clean_symbol}:\n{data_text}"
+            result = ask_ai_smartly(full_prompt)
+            
+            # 3. Display ONLY if a trade is found (Ignore "NO_TRADE")
+            if "NO_TRADE" not in result:
+                with results_container:
+                    st.success(f"✅ **Signal Found: {clean_symbol}** (@ {price})")
+                    st.code(result, language="markdown")
+            else:
+                # Optional: Show small grey text for no trade
+                with st.expander(f"❌ {clean_symbol} - No Setup"):
+                    st.write("Market structure does not match strategy.")
+        
+        # Small delay to prevent rate limits
+        time.sleep(1)
+
+    st.success("🏁 Scan Complete!")
