@@ -2,123 +2,147 @@ import streamlit as st
 import google.generativeai as genai
 import ccxt
 import pandas as pd
-import time
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Auto-Fixing AI Trader", layout="centered")
+st.set_page_config(page_title="Multi-Channel AI Trader", layout="centered")
 
-# --- 1. SETUP AI (Self-Healing) ---
+# --- 1. SETUP AI ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-except Exception as e:
-    st.error(f"⚠️ API Key Error: {e}")
+    model = genai.GenerativeModel('gemini-2.5-flash')
+except:
+    st.error("⚠️ API Key Missing. Please set GEMINI_API_KEY in secrets.")
 
-def get_working_model():
-    """
-    Tries to find a working model automatically.
-    Priority: 2.0 Flash (High Limit) -> 2.5 Flash Lite -> 2.5 Flash (Low Limit)
-    """
-    # List of models to try in order
-    model_candidates = [
-        'gemini-2.0-flash',       # Standard Workhorse (Likely 1500/day)
-        'gemini-2.5-flash-lite',  # New Lightweight (High Speed)
-        'gemini-2.5-flash',       # Premium (Low Limit 20/day)
-        'gemini-pro'              # Old Reliable Backup
-    ]
-    
-    # We return the whole list so the app can loop through them if one fails
-    return model_candidates
-
-# --- 2. DATA FETCHER (Kraken - Works Worldwide) ---
+# --- 2. DATA FETCHER (KRAKEN - Works Everywhere) ---
 def fetch_data(symbol, timeframe):
     """
     Fetches real USDT data from Kraken.
+    Works in India and on Cloud (No Blocking).
     """
     try:
         exchange = ccxt.kraken()
+        
+        # Format Symbol: Kraken expects 'BTC/USDT'
         clean_symbol = symbol.upper().replace("-", "/")
         if "/" not in clean_symbol:
+            # If user types "BTC", assume "BTC/USDT"
             clean_symbol += "/USDT"
             
+        # Fetch Candles
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=30)
+        
+        # Process Data
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         
-        return df.tail(15).to_string(index=False), clean_symbol, df['close'].iloc[-1]
-    except:
+        current_price = df['close'].iloc[-1]
+        data_text = df.tail(15).to_string(index=False)
+        
+        return data_text, clean_symbol, current_price
+        
+    except Exception as e:
         return None, symbol, 0
 
-# --- 3. THE STRATEGY BRAIN ---
+# --- 3. THE 3-CHANNEL STRATEGY BRAIN ---
 def get_system_prompt(mode):
-    base_prompt = "You are a Crypto Signal Generator. Analyze the data and find a trade setup."
-    
-    if mode == "🟢 SPOT (Safe)":
-        return base_prompt + "\nMODE: SPOT. No Leverage. Look for Reversals. Output: #[COIN] #SPOT #LONG..."
-    elif mode == "🟡 SCALPING (Normal)":
-        return base_prompt + "\nMODE: SCALPING. Lev 2-10x. Max Risk 25%. Output: #[COIN] #[DIRECTION] #SCALP..."
-    elif mode == "🔴 RISK/REWARD (High Risk)":
-        return base_prompt + "\nMODE: DEGEN. Lev 10-50x. Max Risk 90%. Output: #[COIN] #[DIRECTION] #RISK_TRADE..."
-    
-    return base_prompt
-
-# --- 4. ROBUST AI CALLER (The Fixer) ---
-def ask_ai_smartly(full_prompt):
     """
-    Loops through models until one works.
+    Switches the AI strategy based on your selected channel.
     """
-    models_to_try = get_working_model()
+    base_prompt = """
+    You are a Professional Crypto Signal Generator. 
+    Analyze the provided market data and finding the best trade setup.
+    """
+
+    if mode == "🟢 SPOT (Safe/Swing)":
+        return base_prompt + """
+        **STRATEGY: SPOT SWING**
+        - **Goal**: Daily/Weekly trend capture.
+        - **Leverage**: NONE (Spot).
+        - **Stop Loss**: Wide & Safe (Below major support).
+        - **Risk**: Low.
+        
+        **OUTPUT FORMAT:**
+        #[COIN] #SPOT #LONG
+        Entry: [Price]
+        Targets: [TP1] - [TP2]
+        SL: [Price]
+        #SMITH_SPOT
+        """
     
-    for model_name in models_to_try:
-        try:
-            # Try to load and use the model
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(full_prompt)
-            return response.text, model_name # Success!
-            
-        except Exception as e:
-            error_msg = str(e)
-            # If 404 (Not Found) or 429 (Quota), just continue to next model
-            if "404" in error_msg or "not found" in error_msg.lower():
-                continue 
-            elif "429" in error_msg or "quota" in error_msg.lower():
-                continue
-            else:
-                return f"❌ Error: {e}", model_name
+    elif mode == "🟡 SCALPING (Intraday)":
+        return base_prompt + """
+        **STRATEGY: INTRADAY SCALPING**
+        - **Goal**: Quick 15m/1h flips.
+        - **Leverage**: 2x - 10x.
+        - **Stop Loss**: Tight. Max risk 20-25% of margin.
+        - **Risk**: Medium.
+        
+        **OUTPUT FORMAT:**
+        #[COIN] #[DIRECTION] #SCALP
+        Entry: [Price]
+        Leverage: [Calc 2x-10x]
+        TP: [TP1]  [TP2]  [TP3]
+        SL: [Price]
+        #SMITH_SCALP
+        """
 
-    return "❌ All AI models failed. Please check your API Key.", "None"
+    elif mode == "🔴 RISK/REWARD (Degen)":
+        return base_prompt + """
+        **STRATEGY: HIGH RISK SNIPER**
+        - **Goal**: Catching wicks and aggressive reversals.
+        - **Leverage**: 10x - 50x.
+        - **Stop Loss**: Very Tight. Max risk 80-90% of margin (High Reward).
+        - **Risk**: Very High.
+        
+        **OUTPUT FORMAT:**
+        #[COIN] #[DIRECTION] #RISK_TRADE
+        Entry: [Price]
+        Leverage: [Calc 10x-50x]
+        TP: [TP1]  [TP2]  [TP3]  [TP4]
+        SL: [Price]
+        #SMITH_DEGEN
+        """
 
-# --- 5. APP INTERFACE ---
-st.title("🤖 Auto-Fixing AI Trader")
-st.caption("Auto-switches models to find one that works.")
+# --- 4. APP INTERFACE ---
+st.title("📲 3-Channel Signal Generator")
+st.write("Select a channel mode to generate the perfect signal.")
 
-# Channel Selector
-mode = st.radio("Channel:", ["🟢 SPOT (Safe)", "🟡 SCALPING (Normal)", "🔴 RISK/REWARD (High Risk)"], horizontal=True)
+# CHANNEL SELECTOR
+mode = st.radio("Select Telegram Channel:", 
+    ["🟢 SPOT (Safe/Swing)", "🟡 SCALPING (Intraday)", "🔴 RISK/REWARD (Degen)"], 
+    horizontal=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    symbol = st.text_input("Symbol", "BTC")
+    symbol = st.text_input("Coin Symbol", "BTC") # Just type BTC, ETH, etc.
 with col2:
+    # Auto-select best timeframe for the mode
     default_tf = 2 if "SPOT" in mode else 1 
     timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=default_tf)
 
-if st.button(f"⚡ Scan {symbol}"):
+if st.button(f"⚡ Generate {mode.split()[1]} Signal"):
     with st.spinner(f"Scanning {symbol} on Kraken..."):
         
-        # 1. Get Data
+        # Get Data
         data_text, clean_symbol, price = fetch_data(symbol, timeframe)
         
         if data_text:
-            st.success(f"Price: **{price} USDT**")
+            st.success(f"✅ Data Fetched: **{clean_symbol}** @ **{price} USDT**")
             
-            # 2. Analyze with Auto-Switching AI
-            with st.spinner("Trying different AI models..."):
-                prompt = get_system_prompt(mode)
-                full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
-                
-                result, used_model = ask_ai_smartly(full_prompt)
-                
-                st.code(result, language="markdown")
-                st.caption(f"✅ Analysis generated using: **{used_model}**")
+            # AI Analysis
+            with st.spinner("Calculating Leverage & Targets..."):
+                try:
+                    # 1. Get the correct instructions
+                    prompt = get_system_prompt(mode)
+                    
+                    # 2. Send to Gemini
+                    full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
+                    response = model.generate_content(full_prompt)
+                    
+                    # 3. Show Result
+                    st.code(response.text, language="markdown")
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
         else:
-            st.error(f"❌ Could not find data for {symbol}.")
+            st.error(f"❌ Could not find data for {symbol}. Try typing just 'BTC' or 'ETH'.")
