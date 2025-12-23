@@ -2,45 +2,54 @@ import streamlit as st
 import google.generativeai as genai
 import ccxt
 import pandas as pd
+import time
+import pytz
+from datetime import datetime
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Multi-Channel AI Trader", layout="centered")
+st.set_page_config(page_title="Impulse Trading Bot", layout="centered")
 
-# --- 1. SETUP AI ---
+# --- 1. SETUP AI (Self-Healing) ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
-except:
-    st.error("⚠️ API Key Missing. Please set GEMINI_API_KEY in secrets.")
+except Exception as e:
+    st.error(f"⚠️ API Key Error: {e}")
 
-# --- 2. DATA FETCHER (KRAKEN - Works Everywhere) ---
-def fetch_data(symbol, timeframe):
+def get_working_model():
+    """Tries to find a working model automatically."""
+    return [
+        'gemini-2.5-flash',       
+        'gemini-1.5-flash',       
+        'gemini-1.5-pro'              
+    ]
+
+# --- 2. DATA FETCHER (Kraken - Works Worldwide) ---
+def fetch_data(symbol, timeframe="15m"):
     """
     Fetches real USDT data from Kraken.
-    Works in India and on Cloud (No Blocking).
     """
     try:
         exchange = ccxt.kraken()
-        
-        # Format Symbol: Kraken expects 'BTC/USDT'
         clean_symbol = symbol.upper().replace("-", "/")
         if "/" not in clean_symbol:
-            # If user types "BTC", assume "BTC/USDT"
             clean_symbol += "/USDT"
             
-        # Fetch Candles
+        # We need enough candles to see the 3 green + 2 red pattern
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe, limit=30)
-        
-        # Process Data
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         
+        # Convert to IST (Indian Standard Time)
+        ist = pytz.timezone('Asia/Kolkata')
+        df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(ist)
+        
         current_price = df['close'].iloc[-1]
+        
+        # We send the last 15 candles to AI to find the pattern
         data_text = df.tail(15).to_string(index=False)
         
         return data_text, clean_symbol, current_price
-        
     except Exception as e:
         return None, symbol, 0
 
@@ -88,45 +97,47 @@ If pattern is NOT found, output ONLY:
 "❌ No Impulse Pattern (3+ Trend / 2+ Retrace) found."
 """
 
-# --- 4. APP INTERFACE ---
-st.title("📲 3-Channel Signal Generator")
-st.write("Select a channel mode to generate the perfect signal.")
+# --- 4. ROBUST AI CALLER ---
+def ask_ai_smartly(full_prompt):
+    models_to_try = get_working_model()
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(full_prompt)
+            return response.text, model_name
+        except Exception:
+            continue
+    return "❌ AI Error: All models busy.", "None"
 
-# CHANNEL SELECTOR
-mode = st.radio("Select Telegram Channel:", 
-    ["🟢 SPOT (Safe/Swing)", "🟡 SCALPING (Intraday)", "🔴 RISK/REWARD (Degen)"], 
-    horizontal=True)
+# --- 5. APP INTERFACE ---
+st.title("🚀 Impulse Strategy Bot (5:30 AM IST)")
+st.caption("Strategy: 3+ Impulse Candles -> 2+ Retracement Candles -> Entry at Breakout")
 
 col1, col2 = st.columns(2)
 with col1:
-    symbol = st.text_input("Coin Symbol", "BTC") # Just type BTC, ETH, etc.
+    symbol = st.text_input("Symbol", "BTC")
 with col2:
-    # Auto-select best timeframe for the mode
-    default_tf = 2 if "SPOT" in mode else 1 
-    timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=default_tf)
+    # Fixed to 15m as per your strategy
+    st.info("Timeframe: **15 min** (Fixed)") 
+    timeframe = "15m"
 
-if st.button(f"⚡ Generate {mode.split()[1]} Signal"):
-    with st.spinner(f"Scanning {symbol} on Kraken..."):
+if st.button(f"⚡ Scan {symbol}"):
+    with st.spinner(f"Scanning {symbol} for 3-Green/2-Red pattern..."):
         
-        # Get Data
+        # 1. Get Data
         data_text, clean_symbol, price = fetch_data(symbol, timeframe)
         
         if data_text:
-            st.success(f"✅ Data Fetched: **{clean_symbol}** @ **{price} USDT**")
+            st.success(f"Current Price: **{price} USDT**")
             
-            # AI Analysis
-            with st.spinner("Calculating Leverage & Targets..."):
-                try:
-                    # 1. Get the correct instructions
-                    prompt = get_system_prompt(mode)
-                    
-                    # 2. Send to Gemini
-                    full_prompt = f"{prompt}\n\nMARKET DATA:\n{data_text}"
-                    response = model.generate_content(full_prompt)
-                    
-                    # 3. Show Result
-                    st.code(response.text, language="markdown")
-                except Exception as e:
-                    st.error(f"AI Error: {e}")
+            # Show Data (Optional)
+            with st.expander("Check Candle Data"):
+                st.code(data_text)
+            
+            # 2. Analyze
+            with st.spinner("Counting candles..."):
+                full_prompt = f"{system_prompt}\n\nMARKET DATA (IST Time):\n{data_text}"
+                result, used_model = ask_ai_smartly(full_prompt)
+                st.code(result, language="markdown")
         else:
-            st.error(f"❌ Could not find data for {symbol}. Try typing just 'BTC' or 'ETH'.")
+            st.error(f"❌ Could not find data for {symbol}.")
